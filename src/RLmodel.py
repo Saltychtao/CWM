@@ -87,13 +87,13 @@ class MLPMapping(nn.Module):
             nn.Linear(nhidden, noutput)
         )
 
-    def forward(self,cembs):
+    def forward(self, cembs):
         return self.proj(cembs)
 
 
 class CWMRL(nn.Module):
 
-    def __init__(self, nchars, nwords, ninput_char, ninput_word, nhidden, wemb_pretrained, cemb_pretrained, device, dropout_rate=0.2):
+    def __init__(self, nchars, nwords, ninput_char, ninput_word, nhidden, wemb_pretrained, cemb_pretrained, device, dropout_rate=0.2, nmapping_fn=5):
         super(CWMRL, self).__init__()
         self.nchars = nchars
         self.nwords = nwords
@@ -108,16 +108,16 @@ class CWMRL(nn.Module):
         self.word_embs = nn.Embedding.from_pretrained(
             wemb_pretrained, freeze=True)
 
-        self.naction = 2
+        self.naction = nmapping_fn
 
         self.policy = Policy(2*ninput_char, nhidden, self.naction, self.device)
 
-        self.CoMapping = CoordinateMapping(ninput_char, nhidden, ninput_word)
-        self.SubMapping = SubordinateMapping(ninput_char, nhidden, ninput_word)
+        self.mapping_fns = dict()
+        for i in range(nmapping_fn):
+            self.mapping_fns[i] = MLPMapping(
+                ninput_char, nhidden, ninput_word).to(self.device)
 
         self.distance = nn.PairwiseDistance()
-
-        self.constraint_loss = []
 
     def forward(self, x, y=None):
         """
@@ -126,31 +126,25 @@ class CWMRL(nn.Module):
 
         bsize = x.size()[0]
         cembs = self.char_embs(x).view(bsize, -1)
-        action = self.select_action(cembs)
-        action_mask = torch.stack(
-            [torch.ones(action.size()).to(self.device) - action.float(), action.float()], dim=-1)
+        action = self.select_action(cembs).view(-1, 1)
 
-        sub_mapped = self.SubMapping(cembs)
-        co_mapped, constraint_loss = self.CoMapping(
-            cembs.view(bsize, 2, -1))
+        action_mask = torch.FloatTensor(
+            bsize, self.naction).to(self.device).zero_().scatter_(1, action, 1)
 
-        mapped = torch.stack([sub_mapped, co_mapped], dim=1)
+        mapped = torch.stack([self.mapping_fns[i](cembs)
+                              for i in range(self.naction)], dim=1)
 
         wemb = None
 
         if y is not None:
             wemb = self.word_embs(y)
+            reward = self.calculate_reward(
+                torch.unsqueeze(wemb, dim=1), mapped)
 
-            self.constraint_loss.append(action.float() * constraint_loss)
-
-            sub_reward = self.calculate_reward(wemb, sub_mapped)
-            co_reward = self.calculate_reward(wemb, co_mapped)
-            reward = torch.stack([sub_reward, co_reward], dim=-1)
-
-            # rewards : [tensor(bsize x 2)]
+            # rewards : [tensor(bsize x naction)]
             self.policy.rewards.append(reward)
 
-            # reward_mask : [tensor(bsize x 2)]
+            # reward_mask : [tensor(bsize x naction)]
             self.policy.reward_mask.append(action_mask)
 
             # self.policy.rewards = reward
@@ -158,7 +152,9 @@ class CWMRL(nn.Module):
         return torch.sum(torch.unsqueeze(action_mask, dim=-1) * mapped, dim=1), wemb
 
     def calculate_reward(self, wemb, mapped, ):
-        final_reward = self.distance(wemb, mapped)
+
+        final_reward = self.distance(
+            wemb.transpose(1, 2), mapped.transpose(1, 2))
 
         return final_reward
 
@@ -181,34 +177,35 @@ class CWMRL(nn.Module):
 
     def update_policy(self, optimizer):
         R = 0
-        rewards = []
+        rewards = self.policy.rewards
         # rewards = self.policy.rewards
 
-        for r in self.policy.rewards[::-1]:
-            R = r + self.policy.gamma * R
-            rewards.insert(0, R)
+        # for r in self.policy.rewards[::-1]:
+        #     R = r + self.policy.gamma * R
+        #     rewards.insert(0, R)
 
-        rewards = torch.stack(rewards, dim=1)
-        masks = torch.stack(self.policy.reward_mask, dim=1)
-        policy_history = torch.stack(self.policy.policy_history, dim=1)
-        masked_rewards = torch.sum(masks * rewards, dim=2)
+        rewards = torch.stack(rewards, dim=-1)
+
+        masks = torch.stack(self.policy.reward_mask, dim=-1)
+
+        policy_history = torch.stack(self.policy.policy_history, dim=-1)
+
+        masked_rewards = torch.sum(masks * rewards, dim=1)
 
         # rewards = torch.FloatTensor(rewards).to(self.device)
         # rewards = (rewards - rewards.mean()) / \
         #     (torch.std(rewards))
 
         reward_loss = (torch.mean(
-            torch.mul(policy_history, masked_rewards).mul(-1), dim=1))
+            (policy_history*masked_rewards).mul_(-1), dim=1))
 
         # self.policy.loss_history.append(reward_loss.item())
-        batch_constraint_loss = torch.stack(self.constraint_loss, dim=1)
-        constraint_loss = torch.mean(batch_constraint_loss, dim=1)
 
         # self.policy.reward_history.append(np.sum(self.policy.rewards.numpy()))
         self.policy.reset()
         self.reset()
 
-        loss = (reward_loss + constraint_loss).mean()
+        loss = reward_loss.mean()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

@@ -1,11 +1,31 @@
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import torch
 import gensim
 import logging
 
 PAD_IDX = 0
 PAD = '<PAD>'
+
+
+class DataProvider(object):
+    def __init__(self, dataloader):
+        self.dataiter = iter(dataloader)
+        self.iteration = 0
+        self.epoch = 0
+
+    def next(self):
+        try:
+            batch = next(self.dataiter)
+            self.iteration += 1
+            return batch
+        except StopIteration:
+            self.epoch += 1
+            self.iteration = 0
+            self.dataiter = iter(self.dataloader)
+
+            batch = next(self.dataiter)
+            return batch
 
 
 class Dictionary(object):
@@ -68,7 +88,7 @@ class Dictionary(object):
 
     def prepare_embedding(self, filepath, embedding_dim, type):
         w2v = gensim.models.Word2Vec.load(filepath)
-        print('Word2Vec%s Loaded' % type)
+        print('Word2Vec of %s Loaded' % type)
 
         dic = self.word2idx if type == 'word' else self.char2idx
         emb_pretrained = np.zeros((len(dic), embedding_dim), dtype='float64')
@@ -84,15 +104,6 @@ class Dictionary(object):
 
     def nwords(self):
         return len(self.word2idx)
-
-    def save(self):
-        with open('data/savedchars', 'w') as f:
-            for c in self.char2idx:
-                f.write(c + '\n')
-
-        with open('data/savedwords', 'w') as f:
-            for w in self.word2idx:
-                f.write(w + '\n')
 
 
 class C2WMDataset(Dataset):

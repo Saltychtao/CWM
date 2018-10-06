@@ -6,7 +6,7 @@ import scipy.stats
 from corpus import PAD_IDX, pad
 
 
-class Eval(object):
+class SemEval(object):
 
     def __init__(self, filepath, dictionary, device):
 
@@ -64,10 +64,10 @@ class Eval(object):
     def calculate_emb(self, model):
         x1 = torch.from_numpy(self.chars1).to(self.device)
         y1 = torch.from_numpy(self.word1).to(self.device)
-        pred_emb1, gold_emb1 = model(x1,y1)
+        pred_emb1, gold_emb1 = model(x1, y1, inference=True, test=True)
 
         x2 = torch.from_numpy(self.chars2).to(self.device)
         y2 = torch.from_numpy(self.word2).to(self.device)
-        pred_emb2, gold_emb2 = model(x2,y2)
+        pred_emb2, gold_emb1 = model(x2, y2, inference=True, test=True)
 
         return pred_emb1, pred_emb2
