@@ -21,7 +21,7 @@ def train(trainFile, validFile, model_save_file):
     ninput_word = 300
     nhidden = 150
     dropout = 0.5
-    batch_size = 128
+    batch_size = 512
     epochs = 10000
     lr = 1
     wemb_filepth = 'data/word2vec_word/wiki.zh.text.simplified.word.vec'
@@ -75,51 +75,50 @@ def train(trainFile, validFile, model_save_file):
     writer = SummaryWriter('logs/nonlinear-300hidden')
     global_step = 0
 
-    best_mse = 1e8
-    best_spearson = 0
-    for epoch in range(epochs):
+    global_step = 0
+    while global_step < 3000:
         global_step = train_epoch(
-            traindataloader,
-            model,
-            optimizer,
-            device,
+            traindataloader=traindataloader,
             devdataloader=validdataloader,
+            model=model,
+            optimizer=optimizer,
+            device=device,
             writer=writer,
             global_step=global_step,
-            epoch=epoch,
-            total_epoch=epochs
+            evaluation1=evaluation1,
+            evaluation2=evaluation2
         )
-        eval_mse = test(validdataloader, model, device, writer, epoch)
-        spearson_seen = test_spearman(evaluation1, model, device)
-        spearson_unseen = test_spearman(evaluation2, model, device)
-        writer.add_scalar('spearson/seen', spearson_seen, epoch)
-        writer.add_scalar('spearson/unseen', spearson_unseen, epoch)
-        if eval_mse < best_mse:
-            best_mse = eval_mse
+        # eval_mse = test(validdataloader, model, device, writer, epoch)
+        # spearson_seen = test_spearman(evaluation1, model, device)
+        # spearson_unseen = test_spearman(evaluation2, model, device)
+        # writer.add_scalar('spearson/seen', spearson_seen, epoch)
+        # writer.add_scalar('spearson/unseen', spearson_unseen, epoch)
+    #     if eval_mse < best_mse:
+    #         best_mse = eval_mse
 
-            print(' Saving model ...')
-            torch.save(
-                {"state_dict": model.state_dict()},
-                model_save_file
-            )
-    writer.close()
-    print('Training finished ! Test Spearman Correlation: {:.2f}, Best Dev MSE :{:.4f}'.format(
-        100*spearson_unseen, best_mse))
+    #         print(' Saving model ...')
+    #         torch.save(
+    #             {"state_dict": model.state_dict()},
+    #             model_save_file
+    #         )
+    # writer.close()
+    # print('Training finished ! Test Spearman Correlation: {:.2f}, Best Dev MSE :{:.4f}'.format(
+    #     100*spearson_unseen, best_mse))
 
 
-def train_epoch(dataloader, model, optimizer, device, writer, global_step, epoch, total_epoch):
+def train_epoch(traindataloader, devdataloader, model, optimizer, device, writer, global_step, evaluation1,evaluation2):
 
     model.train()
 
     # loss_func = nn.CosineEmbeddingLoss(margin=0.5)
     loss_func = nn.MSELoss()
     mean_batch_loss = 0
-    total_batches = len(dataloader)
-    for i, batch in enumerate(dataloader):
+    total_batches = len(traindataloader)
+    for i, batch in enumerate(traindataloader):
 
         x = torch.from_numpy(batch["chars"]).to(device)
         y = torch.from_numpy(batch["word"]).to(device).view(-1)
-        
+
         pred_emb, true_emb = model(x, y)
         batch_loss = loss_func(pred_emb, true_emb)
 
@@ -133,15 +132,20 @@ def train_epoch(dataloader, model, optimizer, device, writer, global_step, epoch
         loss.backward()
         optimizer.step()
         mean_batch_loss += batch_loss.item()
-        
+
+        test(devdataloader, model, device,
+             writer=writer, global_step=global_step)
+        seen = test_spearman(evaluation1, model, device,
+                             writer=writer, global_step=global_step)
+        unseen = test_spearman(evaluation2, model, device,
+                               writer=writer, global_step=global_step)
+        writer.add_scalar('spearson/seen', seen, global_step)
+        writer.add_scalar('spearson/unseen', unseen, global_step)
 
         global_step += 1
         # if global_step % 100 == 0:
         #     writer.add_scalar('training_loss', batch_loss.item(), global_step)
-
-    print(
-        '\rEpoch[{}/{}], loss: {:.4f}'.format(total_epoch, epoch, mean_batch_loss/total_batches), end='')
-
+        
     return global_step
 
 
@@ -168,7 +172,7 @@ def test(dataloader, model, device, writer=None, global_step=None):
     if writer is not None:
         writer.add_scalar('dev_mse', mean_batch_loss /
                           total_instance, global_step)
-    return mean_batch_loss/total_batch
+    return mean_batch_loss/total_instance
 
 
 def test_spearman(evaluation, model, device, writer=None, global_step=None):

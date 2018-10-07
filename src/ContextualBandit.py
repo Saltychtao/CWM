@@ -12,7 +12,7 @@ class CMB(nn.Module):
             super(CMB.ContextualBandit, self).__init__()
 
             self.device = device
-            self.narmsdim = 50
+            self.narmsdim = 300
 
             self.narms = narms
             self.aembs = nn.Embedding(narms, self.narmsdim)
@@ -32,7 +32,7 @@ class CMB(nn.Module):
                 [nn.Linear(nhidden, noutput).to(device) for i in range(self.narms)])
 
             self.input2reward = nn.Sequential(nn.Linear(
-                3*ninput, nhidden), nn.ReLU(), nn.Dropout(p=0.2), nn.Linear(nhidden, 1))
+                2*ninput+self.narmsdim, nhidden), nn.ReLU(), nn.Dropout(p=0.2), nn.Linear(nhidden, 1))
 
             self.history = defaultdict(lambda: 0)
 
@@ -45,8 +45,12 @@ class CMB(nn.Module):
 
             else:
                 output = self.hidden2wemb_list[i](hidden)
+            arm_indexs = torch.tensor(i).to(
+                self.device).repeat(input.size()[0])
+
             reward = self.input2reward(
-                torch.cat([input, output], dim=1))
+                torch.cat([input, self.aembs(arm_indexs)], dim=1))
+            # reward = self.input2reward(torch.cat([input, output], dim=1))
             return output, reward
 
     class Agent(nn.Module):
@@ -87,6 +91,8 @@ class CMB(nn.Module):
         self.cembs = nn.Embedding.from_pretrained(pretrained_cemb, freeze=True)
         self.wembs = nn.Embedding.from_pretrained(pretrained_wemb, freeze=True)
 
+        self.dropout = nn.Dropout(p=0.2)
+
         self.device = device
 
         self.epsilon = epsilon
@@ -116,10 +122,8 @@ class CMB(nn.Module):
         bsize = x.size()[0]
         cembs = self.cembs(x.squeeze()).view(bsize, -1)
 
+        dropout = self.dropout if not test else None
         if inference:
-
-            d = np.random.random()
-            dropout = nn.Dropout(p=0.2)
 
             wemb = self.wembs(y)
 
@@ -131,16 +135,13 @@ class CMB(nn.Module):
                 rewards.append(reward)
 
             if not test:
-                a = np.argmin(rewards)
+                a = int(np.argmin(rewards))
                 self.pool.append((cembs, a, wemb))
             else:
                 a = torch.argmin(
                     torch.cat(rewards, dim=1), dim=1)
                 preds = torch.stack(preds, dim=1,)
-                r = torch.zeros(bsize, self.noutput).to(self.device)
-                for i in range(bsize):
-                    for j in range(self.noutput):
-                        r[i][j] = preds[i][a[i]][j]
+                r = preds[range(bsize), a, :]
 
                 return r, wemb
 
@@ -149,7 +150,7 @@ class CMB(nn.Module):
             map_loss = []
             total_len = len(self.pool)
             for (x, a, gold) in self.pool:
-                pred, expect_reward = self.bandit(a, x)
+                pred, expect_reward = self.bandit(a, x, dropout)
                 true_reward = self.loss_fn(pred, gold)
                 map_loss.append(true_reward)
                 reward_loss.append(torch.sqrt(self.loss_fn(

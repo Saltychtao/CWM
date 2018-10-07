@@ -10,6 +10,7 @@ PAD = '<PAD>'
 
 class DataProvider(object):
     def __init__(self, dataloader):
+        self.dataloader = dataloader
         self.dataiter = iter(dataloader)
         self.iteration = 0
         self.epoch = 0

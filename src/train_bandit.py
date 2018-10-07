@@ -20,7 +20,7 @@ def train(trainFile, validFile, model_save_file):
     ninput_word = 300
     nhidden = 150
     batch_size = 1
-    dev_batch_size = 128
+    dev_batch_size = 512
     epochs = 5000
     lr = 1
     epsilon = 0.1
@@ -67,14 +67,14 @@ def train(trainFile, validFile, model_save_file):
         filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
     #
-    writer = SummaryWriter('logs/bandit4')
+    writer = SummaryWriter('logs/bandit-4emb')
     global_step = 0
 
     best_spearson = -1e8
     best_mse = 1e8
 
     dataprovider = DataProvider(traindataloader)
-    while global_step < 100:
+    while global_step < 3000:
         for i in range(nextRetrain):
             batch = dataprovider.next()
             x = torch.from_numpy(batch["chars"]).to(device)
@@ -92,8 +92,14 @@ def train(trainFile, validFile, model_save_file):
         optimizer.step()
         nextRetrain = coefficient * nextRetrain
 
-        test_spearman(evaluation1, model, device)
-        test(validdataloader, model, device, global_step=global_step)
+        seen = test_spearman(evaluation1, model, device,
+                             writer=writer, global_step=global_step)
+        unseen = test_spearman(evaluation2, model, device,
+                               writer=writer, global_step=global_step)
+        writer.add_scalar('spearson/seen', seen, global_step)
+        writer.add_scalar('spearson/unseen', unseen, global_step)
+        test(validdataloader, model, device,
+             writer=writer, global_step=global_step)
         global_step += 1
 
     writer.close()
@@ -144,7 +150,7 @@ def test(dataloader, model, device, writer=None, global_step=None):
         mean_batch_loss += batch_loss.item()
         total_instance += x.size()[0]
 
-    print('\n[Dev loss: {:.4f}]'.format(mean_batch_loss/total_batch))
+    print('[Dev loss: {:.4f}]'.format(mean_batch_loss/total_instance))
     if writer is not None:
         writer.add_scalar('dev_mse', mean_batch_loss /
                           total_instance, global_step)
@@ -158,10 +164,11 @@ def test_spearman(evaluation, model, device, writer=None, global_step=None):
     spearman_correlation = evaluation(emb1, emb2)[0]
 
     # if writer is not None and global_step is not None:
-    #     writer.add_scalar('data/spearman_correlation',
+    #     writer.add_scalar('spearman_correlation',
     #                       spearman_correlation, global_step)
     print('Dev Spearman correlation: {:.2f}'.format(
         100*spearman_correlation))
+
     return spearman_correlation
 
 
