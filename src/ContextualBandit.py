@@ -32,7 +32,7 @@ class CMB(nn.Module):
                 [nn.Linear(nhidden, noutput).to(device) for i in range(self.narms)])
 
             self.input2reward = nn.Sequential(nn.Linear(
-                2*ninput+self.narmsdim, nhidden), nn.ReLU(), nn.Dropout(p=0.2), nn.Linear(nhidden, 1))
+                3*ninput, nhidden), nn.ReLU(), nn.Dropout(p=0.2), nn.Linear(nhidden, 1))
 
             self.history = defaultdict(lambda: 0)
 
@@ -45,12 +45,12 @@ class CMB(nn.Module):
 
             else:
                 output = self.hidden2wemb_list[i](hidden)
-            arm_indexs = torch.tensor(i).to(
-                self.device).repeat(input.size()[0])
+            # arm_indexs = torch.tensor(i).to(
+            #     self.device).repeat(input.size()[0])
 
-            reward = self.input2reward(
-                torch.cat([input, self.aembs(arm_indexs)], dim=1))
-            # reward = self.input2reward(torch.cat([input, output], dim=1))
+            # reward = self.input2reward(
+            #     torch.cat([input, self.aembs(arm_indexs)], dim=1))
+            reward = self.input2reward(torch.cat([input, output], dim=1))
             return output, reward
 
     class Agent(nn.Module):
